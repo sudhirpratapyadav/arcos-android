@@ -1,0 +1,9 @@
+build/
+.gradle/
+local.properties
+debug.keystore
+*.apk
+*.idsig
+.idea/
+*.iml
+tools/AriaCoda/

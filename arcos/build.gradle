@@ -1,0 +1,45 @@
+apply plugin: 'com.android.library'
+apply plugin: 'maven-publish'
+
+android {
+    namespace 'com.arcos'
+    compileSdk 34
+
+    defaultConfig {
+        minSdk 21
+        targetSdk 34
+    }
+
+    compileOptions {
+        // Java 8 keeps the library usable from older app toolchains; nothing here
+        // needs anything newer.
+        sourceCompatibility JavaVersion.VERSION_1_8
+        targetCompatibility JavaVersion.VERSION_1_8
+    }
+
+    sourceSets {
+        main {
+            java.srcDirs = ['src/main/java']
+            manifest.srcFile 'src/main/AndroidManifest.xml'
+        }
+    }
+}
+
+dependencies {
+    // Chip-specific USB-serial drivers: FTDI, CP210x, CH34x, Prolific, CDC-ACM.
+    // Only UsbSerialTransport touches it — the TCP and simulator transports do not.
+    implementation 'com.github.mik3y:usb-serial-for-android:3.8.1'
+}
+
+afterEvaluate {
+    publishing {
+        publications {
+            release(MavenPublication) {
+                from components.release
+                groupId = 'com.github.sudhirpratapyadav'
+                artifactId = 'arcos-android'
+                version = '0.1.0'
+            }
+        }
+    }
+}

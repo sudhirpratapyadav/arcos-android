@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    package="com.arcos">
+
+    <uses-sdk android:minSdkVersion="21" />
+
+    <!-- The library talks to a USB-serial adapter over OTG. Not required, so an
+         app that only uses the TCP or simulator transports still installs on a
+         device without host mode. -->
+    <uses-feature android:name="android.hardware.usb.host" android:required="false" />
+
+</manifest>

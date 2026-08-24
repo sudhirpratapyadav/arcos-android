@@ -1,0 +1,4 @@
+# JitPack builds this repo on demand when someone depends on it. The Android
+# Gradle plugin needs a JDK 17 toolchain.
+jdk:
+  - openjdk17

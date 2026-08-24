@@ -1,0 +1,19 @@
+// Root build file. The library is also buildable with ./build.sh, which needs
+// nothing but a JDK and the SDK build tools; Gradle is here for consumers who
+// pull this in from JitPack or as a project dependency.
+buildscript {
+    repositories {
+        google()
+        mavenCentral()
+    }
+    dependencies {
+        classpath 'com.android.tools.build:gradle:7.4.2'
+    }
+}
+
+allprojects {
+    repositories {
+        google()
+        mavenCentral()
+    }
+}
