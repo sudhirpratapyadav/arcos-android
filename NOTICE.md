@@ -1,5 +1,8 @@
 # Third-party notices
 
+This project is licensed under the MIT License — see [LICENSE](LICENSE). What
+follows covers code that is *not* this project's.
+
 ## usb-serial-for-android
 
 `libs/usb-serial-for-android-3.8.1.aar` is redistributed unmodified from

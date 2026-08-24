@@ -39,6 +39,18 @@ afterEvaluate {
                 groupId = 'com.github.sudhirpratapyadav'
                 artifactId = 'arcos-android'
                 version = '0.1.0'
+
+                pom {
+                    name = 'arcos-android'
+                    description = 'Drive Pioneer robots from Android over the ARCOS serial protocol'
+                    url = 'https://github.com/sudhirpratapyadav/arcos-android'
+                    licenses {
+                        license {
+                            name = 'MIT License'
+                            url = 'https://opensource.org/licenses/MIT'
+                        }
+                    }
+                }
             }
         }
     }

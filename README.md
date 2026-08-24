@@ -156,8 +156,12 @@ P3-DX conversion factors: 0.485 mm per distance unit, 2π/4096 radians per angle
 unit, VEL2 divisor 20. `RobotParams` carries these per model and picks them from
 the subtype the robot reports.
 
-## Third-party code
+## License
 
-See [NOTICE.md](NOTICE.md). Short version: usb-serial-for-android (MIT) is
-vendored in `libs/`; no AriaCoda code is in this library, and the one file that
-links it is a test tool that ships in neither the `.aar` nor the `.jar`.
+MIT — see [LICENSE](LICENSE).
+
+The library is a clean-room implementation of ARCOS written from the protocol
+description, so it carries none of AriaCoda's GPL-2.0 terms. See
+[NOTICE.md](NOTICE.md) for the details: usb-serial-for-android (MIT) is vendored
+in `libs/`, and the one file that links AriaCoda is a test-vector generator that
+ships in neither the `.aar` nor the `.jar`.
