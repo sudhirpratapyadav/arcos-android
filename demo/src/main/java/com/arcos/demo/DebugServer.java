@@ -51,7 +51,12 @@ public final class DebugServer {
     public interface Host {
         ArcosRobot robot();
         LoggingTransport tap();
-        void connect(String transport);
+        /**
+         * Opens a session. {@code options} carries the query string, so connection
+         * behaviour can be varied from a laptop without reinstalling the app —
+         * which matters on a phone whose USB port is holding a robot.
+         */
+        void connect(Map<String, String> options);
         void disconnect();
     }
 
@@ -182,7 +187,7 @@ public final class DebugServer {
             case "/api/estop":   body = simple(r -> r.eStop(), "emergency stop sent"); break;
             case "/api/reset":   body = simple(r -> r.resetOdometry(), "odometry reset"); break;
             case "/api/motors":  body = motors(query); break;
-            case "/api/connect": host.connect(query.get("t")); body = "connecting\n"; break;
+            case "/api/connect": host.connect(query); body = "connecting\n"; break;
             case "/api/disconnect": host.disconnect(); body = "disconnecting\n"; break;
             case "/":            body = index(); type = "text/html"; break;
             default:             body = "no such endpoint: " + path + "\n"; break;
@@ -315,6 +320,10 @@ public final class DebugServer {
                 + "<a href='/api/drive?v=100&w=0'>/api/drive?v=100&amp;w=0</a>"
                 + "<a href='/api/stop'>/api/stop</a>"
                 + "<a href='/api/estop'>/api/estop</a>"
-                + "<a href='/api/motors?on=1'>/api/motors?on=1</a>";
+                + "<a href='/api/motors?on=1'>/api/motors?on=1</a>"
+                + "<a href='/api/connect?t=usb'>/api/connect?t=usb</a>"
+                + "<a href='/api/connect?t=usb&switchbaud=0'>/api/connect?t=usb&amp;switchbaud=0</a>"
+                + "<a href='/api/connect?t=sim'>/api/connect?t=sim</a>"
+                + "<a href='/api/disconnect'>/api/disconnect</a>";
     }
 }

@@ -166,6 +166,10 @@ CH340 USB-serial adapter at 9600 baud. Confirmed working: the sync handshake,
 OPEN/PULSE, motor enable, `VEL` and `RVEL`, wheel-velocity telemetry, raw encoder
 packets, x/y odometry, gyro heading, all eight sonar transducers, and battery.
 
+Both control paths are confirmed on hardware: the demo app's on-screen joystick
+driving the robot from the phone, and the same robot driven remotely over HTTP
+from a laptop while the phone held the USB cable.
+
 Commanding `RVEL 30` produced wheel velocities of -87 and +85 mm/s. Those imply
 0.511 rad/s across a 334 mm wheelbase — against the P3-DX's actual 330 mm, and
 the commanded 30 deg/s. Independently, heading tracked at 29.3 deg/s.

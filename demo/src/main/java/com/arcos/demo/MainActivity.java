@@ -60,6 +60,12 @@ public final class MainActivity extends Activity {
     private JoystickView joystick;
     private RadarView radar;
 
+    /**
+     * Query string from the last /api/connect, used to override connection
+     * behaviour for one session. Null when connecting from the on-screen buttons.
+     */
+    private java.util.Map<String, String> pendingOptions;
+
     private float forward;
     private float turn;
     private boolean motorsWanted;
@@ -74,12 +80,14 @@ public final class MainActivity extends Activity {
         debug = new DebugServer(DEBUG_PORT, new DebugServer.Host() {
             @Override public ArcosRobot robot() { return robot; }
             @Override public LoggingTransport tap() { return tap; }
-            @Override public void connect(String which) {
+            @Override public void connect(java.util.Map<String, String> options) {
                 ui.post(() -> {
+                    pendingOptions = options;
+                    String which = options.get("t");
                     if ("sim".equals(which)) {
                         MainActivity.this.connect(new SimTransport());
-                    } else if (which != null && which.startsWith("tcp:")) {
-                        MainActivity.this.connect(new TcpTransport(which.substring(4)));
+                    } else if ("tcp".equals(which)) {
+                        MainActivity.this.connect(new TcpTransport(options.get("host")));
                     } else {
                         connectUsb();
                     }
@@ -237,6 +245,33 @@ public final class MainActivity extends Activity {
 
         tap = new LoggingTransport(transport);
         robot = new ArcosRobot(tap);
+
+        // Applied before connect() so the handshake sees them.
+        java.util.Map<String, String> opts = pendingOptions;
+        pendingOptions = null;
+        if (opts != null) {
+            if ("0".equals(opts.get("switchbaud"))) {
+                robot.setAutoSwitchBaud(false);
+                appendLog("option: staying at the initial baud");
+            }
+            if ("0".equals(opts.get("sonar"))) {
+                robot.setSonarOnConnect(false);
+                appendLog("option: sonar left off");
+            }
+            if ("0".equals(opts.get("probe"))) {
+                robot.setProbeBauds(false);
+                appendLog("option: not probing other bauds");
+            }
+            String timeout = opts.get("timeout");
+            if (timeout != null) {
+                try {
+                    robot.setCommandTimeout(Integer.parseInt(timeout));
+                    appendLog("option: command timeout " + timeout + " ms");
+                } catch (NumberFormatException e) {
+                    appendLog("bad timeout option: " + timeout);
+                }
+            }
+        }
         robot.addListener(new ArcosListener() {
             @Override public void onConnected(RobotInfo info) {
                 ui.post(() -> {
