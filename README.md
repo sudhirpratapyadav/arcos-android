@@ -132,6 +132,33 @@ motion, both watchdogs and the emergency stop.
 Regenerate the vectors with `tools/golden_vectors.sh` — it clones and builds
 AriaCoda for you.
 
+## Debugging with the USB port occupied
+
+Once the robot cable is in the phone, there is no adb cable. Two things cover it.
+
+**adb over Wi-Fi.** `tools/setup-wifi-adb.sh` switches adb to TCP while the phone
+is still on USB, so the port is then free. It uses the classic `adb tcpip` route
+rather than Android 11's pairing flow, which needs mDNS that campus networks tend
+to block. The setting does not survive a reboot, so this is a once-per-boot chore.
+
+**An HTTP server in the app.** More useful than adb, because it answers the
+question adb cannot: what bytes actually crossed the wire.
+
+```bash
+curl phone:8080/api/state            # telemetry as JSON
+curl phone:8080/api/raw              # hex of the last ~400 serial exchanges
+curl phone:8080/api/log              # handshake steps, baud switches, dropped frames
+curl "phone:8080/api/drive?v=200&w=0"
+curl phone:8080/api/estop
+```
+
+`LoggingTransport` wraps any transport to capture that hex, and is cheap enough to
+leave on permanently. Everything is a GET so plain curl drives it — fine for a
+debug tool on a trusted network, wrong for anything exposed.
+
+On MIUI specifically: turn off "MIUI optimization" in developer options, or every
+install prompts for confirmation regardless of what "always allow" claims.
+
 ## Verified on a real robot
 
 Run against a Pioneer 3-DX (`IITRaj_3823`, subtype `p3dx-sh`, firmware 3.0) over a

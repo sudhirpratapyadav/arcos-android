@@ -21,6 +21,7 @@ import com.arcos.ArcosRobot;
 import com.arcos.RobotInfo;
 import com.arcos.RobotState;
 import com.arcos.Transport;
+import com.arcos.transport.LoggingTransport;
 import com.arcos.transport.SimTransport;
 import com.arcos.transport.TcpTransport;
 import com.arcos.transport.UsbPermission;
@@ -42,10 +43,14 @@ public final class MainActivity extends Activity {
     private static final int MAX_SPEED_MM_S = 500;
     /** Full-stick turn rate, deg/s. */
     private static final int MAX_TURN_DEG_S = 90;
+    /** Port for the debug HTTP server. */
+    private static final int DEBUG_PORT = 8080;
 
     private final Handler ui = new Handler(Looper.getMainLooper());
 
     private ArcosRobot robot;
+    private LoggingTransport tap;
+    private DebugServer debug;
     private TextView status;
     private TextView telemetry;
     private TextView logView;
@@ -63,6 +68,29 @@ public final class MainActivity extends Activity {
         super.onCreate(savedInstanceState);
         setContentView(buildUi());
         setConnected(false);
+
+        // With the robot on the USB port there is no adb cable, so the app has to
+        // be inspectable over the network instead.
+        debug = new DebugServer(DEBUG_PORT, new DebugServer.Host() {
+            @Override public ArcosRobot robot() { return robot; }
+            @Override public LoggingTransport tap() { return tap; }
+            @Override public void connect(String which) {
+                ui.post(() -> {
+                    if ("sim".equals(which)) {
+                        MainActivity.this.connect(new SimTransport());
+                    } else if (which != null && which.startsWith("tcp:")) {
+                        MainActivity.this.connect(new TcpTransport(which.substring(4)));
+                    } else {
+                        connectUsb();
+                    }
+                });
+            }
+            @Override public void disconnect() {
+                ui.post(MainActivity.this::disconnect);
+            }
+        });
+        debug.start();
+        appendLog("debug http on " + DebugServer.localAddress() + ":" + DEBUG_PORT);
     }
 
     @Override protected void onPause() {
@@ -81,6 +109,9 @@ public final class MainActivity extends Activity {
         super.onDestroy();
         if (robot != null) {
             robot.disconnect();
+        }
+        if (debug != null) {
+            debug.stop();
         }
     }
 
@@ -204,7 +235,8 @@ public final class MainActivity extends Activity {
         disconnect();
         appendLog("connecting over " + transport.name());
 
-        robot = new ArcosRobot(transport);
+        tap = new LoggingTransport(transport);
+        robot = new ArcosRobot(tap);
         robot.addListener(new ArcosListener() {
             @Override public void onConnected(RobotInfo info) {
                 ui.post(() -> {
@@ -307,6 +339,9 @@ public final class MainActivity extends Activity {
     private final StringBuilder logBuffer = new StringBuilder();
 
     private void appendLog(String message) {
+        if (debug != null) {
+            debug.log(message);
+        }
         logBuffer.append(message).append('\n');
         // Keep the buffer from growing without bound over a long session.
         if (logBuffer.length() > 4000) {
