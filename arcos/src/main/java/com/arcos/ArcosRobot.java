@@ -57,6 +57,10 @@ public final class ArcosRobot {
     private static final int SYNC_TIMEOUT_MS = 1000;
     /** Attempts per handshake step before giving up on this baud. */
     private static final int SYNC_ATTEMPTS = 3;
+    /** Settling time after changing an adapter's line rate. */
+    private static final int BAUD_SETTLE_MS = 120;
+    /** How long to listen for unsolicited traffic when probing a rate. */
+    private static final int LISTEN_MS = 250;
     /** Re-send unchanged setpoints this often, so one dropped frame is not forever. */
     private static final int RESEND_EVERY_CYCLES = 5;
 
@@ -579,6 +583,7 @@ public final class ArcosRobot {
      */
     private void clearStaleSession(int[] bauds) throws InterruptedException {
         byte[] close = ArcosPacket.commandInt(Arcos.CLOSE, 1).frame();
+        int heardAt = 0;
         for (int baud : bauds) {
             if (!running) {
                 return;
@@ -586,22 +591,58 @@ public final class ArcosRobot {
             try {
                 if (baud > 0 && transport.supportsBaudRate()) {
                     transport.setBaudRate(baud);
+                    transport.flushInput();
+                    // Adapters need a moment for a new rate to take effect. Writing
+                    // immediately sends the frame at the old rate, so the robot
+                    // never sees a valid CLOSE and the sweep quietly does nothing.
+                    Thread.sleep(BAUD_SETTLE_MS);
                 }
+
+                // A robot left open streams status packets unprompted. Hearing any
+                // is direct evidence of its rate, which beats sweeping blind — and
+                // it is the state a stale session leaves behind.
+                boolean traffic = hearsTraffic(LISTEN_MS);
+
                 transport.write(close);
                 Thread.sleep(150);
                 transport.write(close);
                 Thread.sleep(150);
+
+                if (traffic) {
+                    heardAt = baud;
+                    log("robot was streaming at " + baud + " baud; sent CLOSE");
+                }
+                transport.flushInput();
+                drainReader();
             } catch (IOException e) {
                 // This baud may not even be supported by the adapter; keep going.
             }
         }
-        try {
-            transport.flushInput();
-        } catch (IOException ignored) {
-            // Best effort.
+        if (heardAt > 0 && transport.supportsBaudRate()) {
+            // Start the retry where the robot actually was, rather than walking
+            // the list again from the top.
+            try {
+                transport.setBaudRate(heardAt);
+                Thread.sleep(BAUD_SETTLE_MS);
+                transport.flushInput();
+            } catch (IOException ignored) {
+                // Best effort.
+            }
         }
         drainReader();
         Thread.sleep(300);
+    }
+
+    /** True if anything arrives within {@code ms}. Used to find a live rate. */
+    private boolean hearsTraffic(int ms) throws IOException {
+        byte[] sink = new byte[256];
+        long deadline = System.currentTimeMillis() + ms;
+        while (System.currentTimeMillis() < deadline) {
+            if (transport.read(sink, 0, sink.length, 50) > 0) {
+                return true;
+            }
+        }
+        return false;
     }
 
     /** One full handshake attempt at the current baud. Returns the SYNC2 reply. */
