@@ -29,6 +29,7 @@ public final class ProtocolTest {
         testChecksumRejection();
         testFramerResync();
         testSipDecode();
+        testRobotParams();
 
         System.out.println();
         if (failures == 0) {
@@ -287,35 +288,43 @@ public final class ProtocolTest {
 
     // ---------- SIP decoding ----------
 
+    /** Builds a SIP with the field order from ArRobot::processMotorPacket. */
+    private static ArcosPacket sip(int rawX, int rawY, int rawTh, int lVel, int rVel,
+                                   int batteryTenths, int stall, int flags,
+                                   int[][] sonarReadings) throws Exception {
+        ArcosPacket p = ArcosPacket.build(Arcos.SIP_STANDARD);
+        p.putU16(rawX);
+        p.putU16(rawY);
+        p.putI16(rawTh);
+        p.putI16(lVel);
+        p.putI16(rVel);
+        p.putU8(batteryTenths);
+        p.putU16(stall);
+        p.putI16(rawTh);                 // control heading setpoint
+        p.putU16(flags);
+        p.putU8(0);                      // compass
+        p.putU8(sonarReadings.length);
+        for (int[] r : sonarReadings) {
+            p.putU8(r[0]);
+            p.putU16(r[1]);
+        }
+        byte[] frame = p.frame();
+        return ArcosPacket.parse(frame, 0, frame.length);
+    }
+
     private static void testSipDecode() throws Exception {
         System.out.println();
         System.out.println("== SIP decode");
 
-        // Field order per ArRobot::processMotorPacket.
-        ArcosPacket sip = ArcosPacket.build(Arcos.SIP_STANDARD);
-        sip.putU16(2000);            // x, raw units
-        sip.putU16(1000);            // y
-        sip.putI16(1024);            // theta, 4096 units per full turn -> 90 degrees
-        sip.putI16(300);             // left wheel mm/s
-        sip.putI16(280);             // right wheel mm/s
-        sip.putU8(124);              // battery, tenths of a volt -> 12.4 V
-        sip.putU16(0x0000);          // stall / bumpers
-        sip.putI16(1024);            // control heading setpoint
-        sip.putU16(0x0021);          // flags: motors enabled (bit0) + estop (bit5)
-        sip.putU8(0);                // compass
-        sip.putU8(2);                // two sonar readings follow
-        sip.putU8(3);
-        sip.putU16(1500);
-        sip.putU8(7);
-        sip.putU16(800);
-        byte[] frame = sip.frame();
-
-        ArcosPacket parsed = ArcosPacket.parse(frame, 0, frame.length);
         ArcosRobot robot = new ArcosRobot(new NullTransport(), RobotParams.P3DX);
-        RobotState s = robot.decodeSip(parsed);
 
-        check("sip x mm", "970", String.valueOf(Math.round(s.x)));          // 2000 * 0.485
-        check("sip y mm", "485", String.valueOf(Math.round(s.y)));          // 1000 * 0.485
+        // 4096 angle units per revolution, so 1024 is a quarter turn.
+        // Flags 0x0021: motors enabled (bit 0) and e-stop pressed (bit 5).
+        RobotState s = robot.decodeSip(sip(2000, 1000, 1024, 300, 280, 124, 0, 0x0021,
+                new int[][] {{3, 1500}, {7, 800}}));
+
+        // The first packet establishes the origin, so pose starts at zero.
+        check("first packet is the origin", "0", String.valueOf(Math.round(s.x)));
         check("sip theta deg", "90", String.valueOf(Math.round(s.theta)));
         check("sip left vel", "300", String.valueOf(Math.round(s.leftVel)));
         check("sip right vel", "280", String.valueOf(Math.round(s.rightVel)));
@@ -327,6 +336,50 @@ public final class ProtocolTest {
         check("sip sonar 7", "800", String.valueOf(s.sonar[7]));
         check("sip sonar 0 unknown", "-1", String.valueOf(s.sonar[0]));
         check("sip closest sonar", "800", String.valueOf(s.closestSonar()));
+
+        // Motion accumulates as a delta from that origin: 2000 counts at 0.485.
+        s = robot.decodeSip(sip(4000, 1000, 1024, 300, 280, 124, 0, 0x0021, new int[0][]));
+        check("pose accumulates", "970", String.valueOf(Math.round(s.x)));
+        check("unchanged axis stays put", "0", String.valueOf(Math.round(s.y)));
+
+        // Regression: driving back past the origin. The counter wraps to 0x7FFF for
+        // -1, which the old code read as +32767 and reported as 15892 mm. Seen on a
+        // real P3-DX, not invented.
+        ArcosRobot back = new ArcosRobot(new NullTransport(), RobotParams.P3DX_SH);
+        back.decodeSip(sip(0, 0, 0, 0, 0, 124, 0, 1, new int[0][]));
+        RobotState reversed =
+                back.decodeSip(sip(0x7FFF, 0, 0, -100, -100, 124, 0, 1, new int[0][]));
+        check("reverse past origin is -1mm, not +15892",
+                "-1", String.valueOf(Math.round(reversed.x)));
+
+        // And the counter wrapping the other way, at the top of its range.
+        ArcosRobot fwd = new ArcosRobot(new NullTransport(), RobotParams.P3DX_SH);
+        fwd.decodeSip(sip(0x7FFE, 0, 0, 100, 100, 124, 0, 1, new int[0][]));
+        RobotState wrapped =
+                fwd.decodeSip(sip(2, 0, 0, 100, 100, 124, 0, 1, new int[0][]));
+        check("forward across the wrap is +4mm", "4", String.valueOf(Math.round(wrapped.x)));
+    }
+
+    // ---------- model parameters ----------
+
+    private static void testRobotParams() {
+        System.out.println();
+        System.out.println("== model parameters");
+
+        // The subtype a real P3-DX reports. Getting this wrong halves every
+        // distance, which is worse than failing outright.
+        check("p3dx-sh is recognised", "true",
+                String.valueOf(RobotParams.isKnownSubtype("p3dx-sh")));
+        check("p3dx-sh distance factor", "1.0",
+                String.valueOf(RobotParams.forSubtype("p3dx-sh").distConvFactor));
+        check("p3dx distance factor", "0.485",
+                String.valueOf(RobotParams.forSubtype("p3dx").distConvFactor));
+        check("case insensitive", "p3dx-sh",
+                RobotParams.forSubtype("P3DX-SH").subtype);
+        check("unknown falls back to p3dx-sh", "p3dx-sh",
+                RobotParams.forSubtype("nonesuch").subtype);
+        check("unknown is flagged", "false",
+                String.valueOf(RobotParams.isKnownSubtype("nonesuch")));
     }
 
     /** Stands in for a transport where the test only needs the decoding side. */

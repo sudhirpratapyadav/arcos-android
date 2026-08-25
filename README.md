@@ -132,6 +132,35 @@ motion, both watchdogs and the emergency stop.
 Regenerate the vectors with `tools/golden_vectors.sh` — it clones and builds
 AriaCoda for you.
 
+## Verified on a real robot
+
+Run against a Pioneer 3-DX (`IITRaj_3823`, subtype `p3dx-sh`, firmware 3.0) over a
+CH340 USB-serial adapter at 9600 baud. Confirmed working: the sync handshake,
+OPEN/PULSE, motor enable, `VEL` and `RVEL`, wheel-velocity telemetry, raw encoder
+packets, x/y odometry, gyro heading, all eight sonar transducers, and battery.
+
+Commanding `RVEL 30` produced wheel velocities of -87 and +85 mm/s. Those imply
+0.511 rad/s across a 334 mm wheelbase — against the P3-DX's actual 330 mm, and
+the commanded 30 deg/s. Independently, heading tracked at 29.3 deg/s.
+
+Three bugs surfaced that no amount of testing against the simulator would have
+found, because the simulator was built from the same assumptions as the library:
+
+- **`p3dx-sh` is the subtype real robots report**, not `p3dx` — and its distance
+  factor is 1.0, not 0.485. Falling back to `p3dx` reports every distance at half
+  its true value. Measured on the robot as 1.007 mm/count before ARIA's own
+  `p3dx-sh.p` was consulted, which says 1.0.
+- **x and y are a wrapping 15-bit counter, not an absolute position.** Reversing
+  a millimetre past the origin sends `0x7FFF`, which the old code read as +15892
+  mm. They have to be accumulated as deltas.
+- **A client that dies mid-handshake wedges the controller.** ARCOS answers SYNC2
+  then waits for OPEN, and ignores further sync attempts — silent at every baud,
+  looking exactly like a dead robot. Only a CLOSE broadcast recovers it.
+
+A fourth was found by the tests afterwards: `resetOdometry()` re-origined
+immediately, but SETO takes a cycle or two to land, and the counter's jump to
+zero looked like one large backwards delta.
+
 ## Protocol notes
 
 For anyone extending this. Frames are:

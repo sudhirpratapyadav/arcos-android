@@ -91,6 +91,26 @@ public final class ArcosRobot {
     private boolean timedOutLogged;
     private final Deque<ArcosPacket> outbox = new ArrayDeque<>();
 
+    // ---------- odometry accumulation ----------
+    /**
+     * The robot reports x and y as a 15-bit counter that wraps, not as an absolute
+     * position, so they have to be accumulated as deltas. Reading them directly is
+     * wrong the moment the robot reverses past its origin: x of -1 arrives as
+     * 0x7FFF and reads as +15.9 m. Observed on real hardware, not theorised.
+     */
+    private int lastRawX;
+    private int lastRawY;
+    private boolean poseOriginPending = true;
+    private double poseX;
+    private double poseY;
+    /**
+     * SETO has been sent but the robot's counter has not zeroed yet. The command
+     * takes a cycle or two to land, and the jump to zero looks exactly like a large
+     * backwards delta, so the pose is held at the origin until the robot confirms.
+     */
+    private volatile boolean resetPending;
+    private volatile long resetDeadline;
+
     // ---------- frame reader ----------
     private final byte[] rxBuf = new byte[4096];
     private final PacketFramer framer = new PacketFramer();
@@ -183,6 +203,7 @@ public final class ArcosRobot {
             return;
         }
         running = true;
+        poseOriginPending = true;
         state = State.CONNECTING;
         thread = new Thread(this::run, "arcos-cycle");
         thread.setDaemon(true);
@@ -356,8 +377,15 @@ public final class ArcosRobot {
         send(ArcosPacket.commandInt(Arcos.SONAR, enabled ? 1 : 0));
     }
 
-    /** Resets the odometry origin, so the next SIP reports (0, 0, 0). */
+    /**
+     * Resets the odometry origin, so the pose returns to (0, 0, 0). Zeroes the
+     * robot's own counter and re-origins the local accumulator, which would
+     * otherwise report one large bogus delta as the counter jumps to zero.
+     */
     public void resetOdometry() {
+        resetDeadline = System.currentTimeMillis() + 1000;
+        resetPending = true;
+        poseOriginPending = true;
         send(ArcosPacket.commandInt(Arcos.SETO, 0));
     }
 
@@ -492,6 +520,31 @@ public final class ArcosRobot {
         }
 
         IOException last = null;
+        for (int attempt = 0; attempt < 2; attempt++) {
+            if (attempt == 1) {
+                // Nothing answered anywhere. Before giving up, assume the
+                // controller is wedged part-way through a previous handshake and
+                // shake it loose — see clearStaleSession().
+                log("no response at any baud; clearing a possible stale session");
+                clearStaleSession(bauds);
+            }
+            last = trySyncAcrossBauds(bauds, last);
+            if (last == null) {
+                return;
+            }
+        }
+        throw new ArcosException(
+                "robot did not respond to the sync handshake"
+                        + (last == null ? "" : " (" + last.getMessage() + ")"),
+                last);
+    }
+
+    /**
+     * Runs the handshake at each candidate baud. Returns null on success, or the
+     * last failure to report.
+     */
+    private IOException trySyncAcrossBauds(int[] bauds, IOException last)
+            throws IOException, InterruptedException {
         for (int baud : bauds) {
             if (!running) {
                 throw new ArcosException("cancelled");
@@ -505,16 +558,50 @@ public final class ArcosRobot {
                 drainReader();
                 ArcosPacket sync2 = trySync();
                 readIdentity(sync2);
-                return;
+                return null;
             } catch (ArcosException e) {
                 last = e;
                 log("no reply at " + (baud > 0 ? baud + " baud" : "current rate"));
             }
         }
-        throw new ArcosException(
-                "robot did not respond to the sync handshake"
-                        + (last == null ? "" : " (" + last.getMessage() + ")"),
-                last);
+        return last;
+    }
+
+    /**
+     * Broadcasts CLOSE at every candidate baud.
+     *
+     * <p>ARCOS has a small state machine: once it has answered SYNC2 it waits for
+     * OPEN and stops replying to further sync attempts. A client that exits
+     * mid-handshake — a crash, or just closing the port — leaves the controller
+     * stuck there, silent at every rate, and no amount of retrying the handshake
+     * recovers it. CLOSE is the only way back, and since the wedged rate is
+     * unknown it has to go to all of them.
+     */
+    private void clearStaleSession(int[] bauds) throws InterruptedException {
+        byte[] close = ArcosPacket.commandInt(Arcos.CLOSE, 1).frame();
+        for (int baud : bauds) {
+            if (!running) {
+                return;
+            }
+            try {
+                if (baud > 0 && transport.supportsBaudRate()) {
+                    transport.setBaudRate(baud);
+                }
+                transport.write(close);
+                Thread.sleep(150);
+                transport.write(close);
+                Thread.sleep(150);
+            } catch (IOException e) {
+                // This baud may not even be supported by the adapter; keep going.
+            }
+        }
+        try {
+            transport.flushInput();
+        } catch (IOException ignored) {
+            // Best effort.
+        }
+        drainReader();
+        Thread.sleep(300);
     }
 
     /** One full handshake attempt at the current baud. Returns the SYNC2 reply. */
@@ -697,8 +784,31 @@ public final class ArcosRobot {
         int rawY = p.u16() & 0x7FFF;
         int rawTh = p.i16();
 
-        double x = rawX * params.distConvFactor;
-        double y = rawY * params.distConvFactor;
+        if (poseOriginPending || resetPending) {
+            // Take this packet as the origin. Pose is therefore measured from the
+            // moment of connecting, or from the last resetOdometry().
+            lastRawX = rawX;
+            lastRawY = rawY;
+            poseX = 0;
+            poseY = 0;
+            poseOriginPending = false;
+            // Stop re-origining as soon as the robot's own counter reads zero,
+            // or once waiting for that has gone on too long.
+            if (resetPending && ((rawX == 0 && rawY == 0)
+                    || System.currentTimeMillis() > resetDeadline)) {
+                resetPending = false;
+            }
+        } else {
+            poseX += unwrap(rawX - lastRawX) * params.distConvFactor;
+            poseY += unwrap(rawY - lastRawY) * params.distConvFactor;
+            lastRawX = rawX;
+            lastRawY = rawY;
+        }
+        double x = poseX;
+        double y = poseY;
+
+        // Heading needs no unwrapping: it is an angle, so the raw counter's wrap
+        // at one revolution is exactly the behaviour wanted.
         double theta = normaliseDegrees(Math.toDegrees(rawTh * params.angleConvFactor));
 
         double left = p.i16() * params.velConvFactor;
@@ -746,6 +856,22 @@ public final class ArcosRobot {
             return fresh;
         }
         return Arrays.copyOf(prev.sonar, prev.sonar.length);
+    }
+
+    /**
+     * Shortest-path delta between two samples of the 15-bit position counter. A
+     * jump larger than a quarter of the range is a wrap, not real motion — at the
+     * robot's top speed a single cycle covers a few hundred counts, nowhere near
+     * this threshold.
+     */
+    private static int unwrap(int delta) {
+        if (delta > 0x1000) {
+            return delta - 0x8000;
+        }
+        if (delta < -0x1000) {
+            return delta + 0x8000;
+        }
+        return delta;
     }
 
     private static double normaliseDegrees(double deg) {

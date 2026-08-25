@@ -49,9 +49,25 @@ public final class RobotParams {
         this.switchToBaud = switchToBaud;
     }
 
-    /** Pioneer 3-DX. The default, and the model this library was written against. */
+    /**
+     * Pioneer 3-DX with the SH-series controller — what almost every surviving
+     * P3-DX actually reports, and what this library was verified against on real
+     * hardware.
+     *
+     * <p>Note the distance factor: 1.0, not the 0.485 of the older H8 board. Using
+     * {@link #P3DX} for one of these reports every distance at half its true
+     * value, which is why {@link #forSubtype} matching matters.
+     */
+    public static final RobotParams P3DX_SH = new RobotParams(
+            "p3dx-sh", 1.0, 0.001534, 1.0, 1.0, 20.0, 2200, 500, 250, 38400);
+
+    /** Pioneer 3-DX with the older H8 controller. */
     public static final RobotParams P3DX = new RobotParams(
             "p3dx", 0.485, 0.001534, 1.0, 1.0, 20.0, 2200, 500, 250, 38400);
+
+    /** Pioneer 3-AT with the SH-series controller. */
+    public static final RobotParams P3AT_SH = new RobotParams(
+            "p3at-sh", 1.0, 0.001534, 1.0, 1.0, 20.0, 2200, 500, 267, 38400);
 
     /** Pioneer 3-AT, the four-wheel outdoor chassis. */
     public static final RobotParams P3AT = new RobotParams(
@@ -61,6 +77,10 @@ public final class RobotParams {
     public static final RobotParams P2DX = new RobotParams(
             "p2dx", 0.969, 0.001534, 1.0, 1.0, 20.0, 1800, 360, 220, 9600);
 
+    /** PeopleBot with the SH-series controller. */
+    public static final RobotParams PEOPLEBOT_SH = new RobotParams(
+            "peoplebot-sh", 1.0, 0.001534, 1.0, 1.0, 20.0, 2200, 500, 250, 38400);
+
     /** PeopleBot, a P3-DX chassis with a taller mast. */
     public static final RobotParams PEOPLEBOT = new RobotParams(
             "peoplebot", 0.485, 0.001534, 1.0, 1.0, 20.0, 2200, 500, 250, 38400);
@@ -69,11 +89,12 @@ public final class RobotParams {
     public static final RobotParams AMIGO = new RobotParams(
             "amigo", 1.0, 0.001534, 0.6154, 1.0, 20.0, 1000, 300, 180, 0);
 
-    private static final RobotParams[] KNOWN = {P3DX, P3AT, P2DX, PEOPLEBOT, AMIGO};
+    private static final RobotParams[] KNOWN = {
+            P3DX_SH, P3DX, P3AT_SH, P3AT, P2DX, PEOPLEBOT_SH, PEOPLEBOT, AMIGO};
 
     /**
      * Parameters for the subtype string the robot reported, falling back to
-     * {@link #P3DX}. The comparison is case-insensitive because firmware versions
+     * {@link #P3DX_SH}. The comparison is case-insensitive because firmware versions
      * differ on capitalisation.
      */
     public static RobotParams forSubtype(String reported) {
@@ -85,7 +106,7 @@ public final class RobotParams {
                 }
             }
         }
-        return P3DX;
+        return P3DX_SH;
     }
 
     /** True when {@link #forSubtype} would have to guess for this string. */
